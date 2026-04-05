@@ -165,7 +165,7 @@ export default function App() {
       console.error(err);
       setError(err.message || 'Ocorreu um erro inesperado.');
       if (
-        err.message?.includes('HUGGINGFACE_API_KEY') ||
+        err.message?.includes('REPLICATE_API_TOKEN') ||
         err.message?.includes('Configure') ||
         err.message?.includes('token')
       ) setHasApiKey(false);
@@ -342,14 +342,14 @@ export default function App() {
           <div className="w-16 h-16 bg-blue-500/20 rounded-2xl flex items-center justify-center mx-auto mb-6">
             <Key className="w-8 h-8 text-blue-400" />
           </div>
-          <h1 className="text-2xl font-bold mb-4">Configure a API HuggingFace</h1>
+          <h1 className="text-2xl font-bold mb-4">Configure a API Replicate</h1>
           <p className="text-gray-400 mb-8 leading-relaxed">
-            1. Acesse <a href="https://huggingface.co/settings/tokens" target="_blank" className="text-blue-400 underline">https://huggingface.co/settings/tokens</a><br/>
-            2. Crie um novo token (read access)<br/>
-            3. Copie o token para `.env.local`: `HUGGINGFACE_API_KEY=seu_token`
+            1. Acesse <a href="https://replicate.com/account/api-tokens" target="_blank" className="text-blue-400 underline">https://replicate.com/account/api-tokens</a><br/>
+            2. Copie seu token de API<br/>
+            3. Cole em `.env.local`: `REPLICATE_API_TOKEN=seu_token`
           </p>
           <p className="mt-6 text-xs text-gray-500">
-            Usamos a API gratuita do HuggingFace para processar vídeos de virtual try-on sem custo.
+            Usamos a API gratuita do Replicate para virtual try-on de alta qualidade, sem custo inicial.
           </p>
         </motion.div>
       </div>

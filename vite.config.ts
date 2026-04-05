@@ -106,41 +106,84 @@ export default defineConfig(({ mode }) => {
                 return;
               }
 
-              const hfToken = env.HUGGINGFACE_API_KEY || process.env.HUGGINGFACE_API_KEY;
-              if (!hfToken) {
+              const apiToken = env.REPLICATE_API_TOKEN || process.env.REPLICATE_API_TOKEN;
+              if (!apiToken) {
                 res.statusCode = 400;
                 res.setHeader('Content-Type', 'text/plain');
-                res.end('Configure HUGGINGFACE_API_KEY no .env.local para usar a API de virtual try-on.');
+                res.end('Configure REPLICATE_API_TOKEN no .env.local para usar a API de virtual try-on.');
                 return;
               }
 
-              // Decodificar imagens
-              const garmentBuffer = decodeBase64Input(body.garmentImage);
-              const videoBuffer = decodeBase64Input(body.sourceVideo);
+              // Usar Replicate API - mais confiável para virtual try-on
+              // Model: IDM-VTON (melhor modelo de virtual try-on)
+              const replicateApiUrl = 'https://api.replicate.com/v1/predictions';
 
-              // Usar novo HuggingFace Router API (api-inference.huggingface.co foi descontinuada)
-              // Model: CagliariLuca/virtualtryon-vitonhd-inswapper
-              const apiUrl = 'https://router.huggingface.co/models/CagliariLuca/virtualtryon-vitonhd-inswapper';
+              // Converter base64 para URLs de dados
+              const garmentDataUrl = body.garmentImage;
 
-              const FormData = (await import('form-data')).default;
-              const formData = new FormData();
-              formData.append('inputs', garmentBuffer, { filename: 'garment.jpg' });
-
-              const response = await fetch(apiUrl, {
+              // Enviar para Replicate
+              const prediction = await fetch(replicateApiUrl, {
                 method: 'POST',
                 headers: {
-                  'Authorization': `Bearer ${hfToken}`,
+                  'Authorization': `Token ${apiToken}`,
+                  'Content-Type': 'application/json',
                 },
-                body: formData,
+                body: JSON.stringify({
+                  version: '8bafbc13a02caaaba766218b0e49b5854c1b20410a10f6f374e0a59bcc691299', // IDM-VTON
+                  input: {
+                    person_image: garmentDataUrl,
+                    garment_image: garmentDataUrl,
+                  },
+                }),
               });
 
-              if (!response.ok) {
-                const errText = await response.text();
-                throw new Error(`Erro na API HuggingFace (${response.status}): ${errText}`);
+              if (!prediction.ok) {
+                const errText = await prediction.text();
+                throw new Error(`Erro ao iniciar processamento (${prediction.status}): ${errText}`);
               }
 
-              const outputBlob = await response.blob();
-              const outputBuffer = Buffer.from(await outputBlob.arrayBuffer());
+              const predictionData = await prediction.json() as any;
+              const predictionId = predictionData.id;
+
+              // Aguardar resultado (máx 300 segundos)
+              let result: any = null;
+              let attempts = 0;
+              const maxAttempts = 60; // 60 tentativas x 5 segundos = 5 minutos
+
+              while (attempts < maxAttempts) {
+                await new Promise(r => setTimeout(r, 5000)); // Aguardar 5 segundos
+
+                const statusResponse = await fetch(`${replicateApiUrl}/${predictionId}`, {
+                  headers: { 'Authorization': `Token ${apiToken}` },
+                });
+
+                if (!statusResponse.ok) {
+                  throw new Error(`Erro ao verificar status (${statusResponse.status})`);
+                }
+
+                const status = await statusResponse.json();
+
+                if (status.status === 'succeeded') {
+                  result = status.output;
+                  break;
+                } else if (status.status === 'failed') {
+                  throw new Error(`Processamento falhou: ${status.error || 'Erro desconhecido'}`);
+                }
+
+                attempts++;
+              }
+
+              if (!result) {
+                throw new Error('Timeout: processamento levou muito tempo');
+              }
+
+              // Fazer download do resultado
+              const outputResponse = await fetch(result[0] || result);
+              if (!outputResponse.ok) {
+                throw new Error(`Erro ao baixar resultado (${outputResponse.status})`);
+              }
+
+              const outputBuffer = Buffer.from(await outputResponse.arrayBuffer());
 
               res.statusCode = 200;
               res.setHeader('Content-Type', 'video/mp4');
