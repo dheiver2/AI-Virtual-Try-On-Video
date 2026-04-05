@@ -17,12 +17,13 @@ import {
   RefreshCw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-const MODEL_NAME = 'ali-vilab/i2vgen-xl';
+const MODEL_NAME = 'MagicTryOn';
 
 export default function App() {
   const [showLanding, setShowLanding] = useState(true);
   const [clothingImage, setClothingImage] = useState<string | null>(null);
   const [referenceVideo, setReferenceVideo] = useState<string | null>(null);
+  const [referenceVideoData, setReferenceVideoData] = useState<string | null>(null);
   const [videoFrame, setVideoFrame] = useState<string | null>(null);
   const [lastFrame, setLastFrame] = useState<string | null>(null);
   const [prompt, setPrompt] = useState('A person wearing this outfit, maintaining the same pose and environment as the reference.');
@@ -57,6 +58,9 @@ export default function App() {
 
     const url = URL.createObjectURL(file);
     setReferenceVideo(url);
+    const reader = new FileReader();
+    reader.onloadend = () => setReferenceVideoData(reader.result as string);
+    reader.readAsDataURL(file);
     
     // Extract first frame and force 16:9 aspect ratio
     const video = document.createElement('video');
@@ -114,7 +118,7 @@ export default function App() {
   };
 
   const generateVideo = async () => {
-    if (!clothingImage || !videoFrame) {
+    if (!clothingImage || !videoFrame || !referenceVideoData) {
       setError('Por favor, envie a imagem da roupa e o vídeo de referência.');
       return;
     }
@@ -125,7 +129,7 @@ export default function App() {
     setGenerationStatus('Iniciando geração do vídeo...');
 
     try {
-      setGenerationStatus('Enviando solicitação com preservação de movimento...');
+      setGenerationStatus('Enviando solicitação para o MagicTryOn...');
       
       const tryOnPrompt = `A realistic video showing the exact same motion and action as the reference frames. The person from the first frame is now wearing the exact outfit from the reference clothing image. Maintain identity, background, and the specific movement. The person is ${prompt}. High quality, cinematic.`;
 
@@ -136,18 +140,11 @@ export default function App() {
         },
         body: JSON.stringify({
           model: MODEL_NAME,
-          inputs: tryOnPrompt,
-          parameters: {
-            image: videoFrame.split(',')[1],
-            conditioning_image: clothingImage.split(',')[1],
-            ...(lastFrame && { end_frame: lastFrame.split(',')[1] }),
-            num_frames: 49,
-            fps: 8,
-          },
-          options: {
-            wait_for_model: true,
-            use_cache: false,
-          },
+          prompt: tryOnPrompt,
+          garmentImage: clothingImage,
+          sourceVideo: referenceVideoData,
+          firstFrame: videoFrame,
+          ...(lastFrame && { lastFrame }),
         }),
       });
 
@@ -167,7 +164,11 @@ export default function App() {
     } catch (err: any) {
       console.error(err);
       setError(err.message || 'Ocorreu um erro inesperado.');
-      if (err.message?.includes('VITE_HF_API_KEY') || err.message?.includes('HF_API_KEY')) setHasApiKey(false);
+      if (
+        err.message?.includes('HUGGINGFACE_API_KEY') ||
+        err.message?.includes('Configure') ||
+        err.message?.includes('token')
+      ) setHasApiKey(false);
     } finally {
       setIsGenerating(false);
     }
@@ -341,12 +342,14 @@ export default function App() {
           <div className="w-16 h-16 bg-blue-500/20 rounded-2xl flex items-center justify-center mx-auto mb-6">
             <Key className="w-8 h-8 text-blue-400" />
           </div>
-          <h1 className="text-2xl font-bold mb-4">Configuração Necessária</h1>
+          <h1 className="text-2xl font-bold mb-4">Configure a API HuggingFace</h1>
           <p className="text-gray-400 mb-8 leading-relaxed">
-            Defina a variável `HF_API_KEY` (ou `VITE_HF_API_KEY`) no arquivo `.env.local` com seu token do Hugging Face para usar o modelo open source.
+            1. Acesse <a href="https://huggingface.co/settings/tokens" target="_blank" className="text-blue-400 underline">https://huggingface.co/settings/tokens</a><br/>
+            2. Crie um novo token (read access)<br/>
+            3. Copie o token para `.env.local`: `HUGGINGFACE_API_KEY=seu_token`
           </p>
           <p className="mt-6 text-xs text-gray-500">
-            Crie um token em <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener noreferrer" className="underline hover:text-blue-400">huggingface.co/settings/tokens</a>.
+            Usamos a API gratuita do HuggingFace para processar vídeos de virtual try-on sem custo.
           </p>
         </motion.div>
       </div>
@@ -376,6 +379,7 @@ export default function App() {
               onClick={() => {
                 setClothingImage(null);
                 setReferenceVideo(null);
+                setReferenceVideoData(null);
                 setVideoFrame(null);
                 setLastFrame(null);
                 setVideoUrl(null);

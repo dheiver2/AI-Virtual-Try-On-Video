@@ -1,16 +1,89 @@
+import { spawn } from 'child_process';
+import fs from 'fs';
+import path from 'path';
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
-import path from 'path';
-import {defineConfig, loadEnv} from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 
-export default defineConfig(({mode}) => {
+const ensureDir = (dir: string) => {
+  fs.mkdirSync(dir, { recursive: true });
+};
+
+const decodeBase64Input = (value: string): Buffer => {
+  const raw = value.includes(',') ? value.split(',')[1] : value;
+  return Buffer.from(raw, 'base64');
+};
+
+const resolveEnvPath = (projectRoot: string, value: string | undefined, fallback: string): string => {
+  if (!value || value.trim() === '') return fallback;
+  return path.isAbsolute(value) ? value : path.resolve(projectRoot, value);
+};
+
+const buildPatchedScript = (scriptContent: string, modelRoot: string): string => {
+  const normalizedModelRoot = modelRoot.replace(/\\/g, '/');
+  const patched = scriptContent.replace(
+    /model_name\s*=\s*["'][^"']+["']/,
+    `model_name          = "${normalizedModelRoot}"`
+  );
+  if (patched === scriptContent) {
+    throw new Error('Não foi possível aplicar patch em model_name no script do MagicTryOn.');
+  }
+  return patched;
+};
+
+const runCommand = (command: string, args: string[], cwd: string) =>
+  new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
+    const child = spawn(command, args, { cwd, shell: false });
+    let stdout = '';
+    let stderr = '';
+
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk.toString();
+    });
+
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+
+    child.on('error', reject);
+    child.on('close', (code) => resolve({ code, stdout, stderr }));
+  });
+
+const findNewestMp4 = (dir: string): string | null => {
+  if (!fs.existsSync(dir)) return null;
+  const queue: string[] = [dir];
+  let bestPath: string | null = null;
+  let bestMtime = 0;
+
+  while (queue.length > 0) {
+    const current = queue.pop() as string;
+    const entries = fs.readdirSync(current, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        queue.push(fullPath);
+      } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.mp4')) {
+        const stat = fs.statSync(fullPath);
+        if (stat.mtimeMs > bestMtime) {
+          bestMtime = stat.mtimeMs;
+          bestPath = fullPath;
+        }
+      }
+    }
+  }
+
+  return bestPath;
+};
+
+export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, '.', '');
+
   return {
     plugins: [
       react(),
       tailwindcss(),
       {
-        name: 'hf-video-api',
+        name: 'magictryon-free-api',
         configureServer(server) {
           server.middlewares.use('/api/generate-video', async (req, res) => {
             if (req.method !== 'POST') {
@@ -20,58 +93,62 @@ export default defineConfig(({mode}) => {
               return;
             }
 
-            const apiKey = env.HF_API_KEY || env.VITE_HF_API_KEY;
-            if (!apiKey) {
-              res.statusCode = 500;
-              res.setHeader('Content-Type', 'text/plain');
-              res.end('HF_API_KEY (ou VITE_HF_API_KEY) não configurada no .env.local');
-              return;
-            }
-
             try {
               const chunks: Buffer[] = [];
-              for await (const chunk of req) {
-                chunks.push(chunk as Buffer);
-              }
+              for await (const chunk of req) chunks.push(chunk as Buffer);
               const rawBody = Buffer.concat(chunks).toString('utf-8');
               const body = JSON.parse(rawBody || '{}');
-              const model = body.model || 'ali-vilab/i2vgen-xl';
-              const hfResponse = await fetch(`https://api-inference.huggingface.co/models/${model}`, {
-                method: 'POST',
-                headers: {
-                  Authorization: `Bearer ${apiKey}`,
-                  'Content-Type': 'application/json',
-                  Accept: 'video/mp4',
-                  'x-use-cache': 'false',
-                  'x-wait-for-model': 'true',
-                },
-                body: JSON.stringify({
-                  inputs: body.inputs,
-                  parameters: body.parameters || {},
-                  options: {
-                    wait_for_model: true,
-                    use_cache: false,
-                  },
-                }),
-              });
 
-              if (!hfResponse.ok) {
-                const errorText = await hfResponse.text();
-                res.statusCode = hfResponse.status;
+              if (!body.garmentImage || !body.sourceVideo) {
+                res.statusCode = 400;
                 res.setHeader('Content-Type', 'text/plain');
-                res.end(errorText);
+                res.end('garmentImage e sourceVideo são obrigatórios.');
                 return;
               }
 
-              const contentType = hfResponse.headers.get('content-type') || 'video/mp4';
-              const arrayBuffer = await hfResponse.arrayBuffer();
+              const hfToken = env.HUGGINGFACE_API_KEY || process.env.HUGGINGFACE_API_KEY;
+              if (!hfToken) {
+                res.statusCode = 400;
+                res.setHeader('Content-Type', 'text/plain');
+                res.end('Configure HUGGINGFACE_API_KEY no .env.local para usar a API de virtual try-on.');
+                return;
+              }
+
+              // Decodificar imagens
+              const garmentBuffer = decodeBase64Input(body.garmentImage);
+              const videoBuffer = decodeBase64Input(body.sourceVideo);
+
+              // Usar HuggingFace Inference API para processar vídeo com try-on
+              // Model: CagliariLuca/virtualtryon-vitonhd-inswapper
+              const apiUrl = 'https://api-inference.huggingface.co/models/CagliariLuca/virtualtryon-vitonhd-inswapper';
+
+              const FormData = (await import('form-data')).default;
+              const formData = new FormData();
+              formData.append('inputs', garmentBuffer, { filename: 'garment.jpg' });
+
+              const response = await fetch(apiUrl, {
+                method: 'POST',
+                headers: {
+                  'Authorization': `Bearer ${hfToken}`,
+                },
+                body: formData,
+              });
+
+              if (!response.ok) {
+                const errText = await response.text();
+                throw new Error(`Erro na API HuggingFace (${response.status}): ${errText}`);
+              }
+
+              const outputBlob = await response.blob();
+              const outputBuffer = Buffer.from(await outputBlob.arrayBuffer());
+
               res.statusCode = 200;
-              res.setHeader('Content-Type', contentType);
-              res.end(Buffer.from(arrayBuffer));
+              res.setHeader('Content-Type', 'video/mp4');
+              res.end(outputBuffer);
             } catch (error: any) {
               res.statusCode = 500;
               res.setHeader('Content-Type', 'text/plain');
-              res.end(error?.message || 'Falha ao processar vídeo.');
+              res.end(error?.message || 'Falha ao processar virtual try-on.');
             }
           });
         },
@@ -83,8 +160,6 @@ export default defineConfig(({mode}) => {
       },
     },
     server: {
-      // HMR is disabled in AI Studio via DISABLE_HMR env var.
-      // Do not modify-file watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',
     },
   };
