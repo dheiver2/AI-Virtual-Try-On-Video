@@ -18,8 +18,6 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 const MODEL_NAME = 'ali-vilab/i2vgen-xl';
-const HF_API_URL = `https://api-inference.huggingface.co/models/${MODEL_NAME}`;
-const HF_API_KEY = import.meta.env.VITE_HF_API_KEY as string | undefined;
 
 export default function App() {
   const [showLanding, setShowLanding] = useState(true);
@@ -39,7 +37,7 @@ export default function App() {
   const videoPreviewRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
-    setHasApiKey(Boolean(HF_API_KEY));
+    setHasApiKey(true);
   }, []);
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -127,22 +125,17 @@ export default function App() {
     setGenerationStatus('Iniciando geração do vídeo...');
 
     try {
-      if (!HF_API_KEY) throw new Error('VITE_HF_API_KEY não encontrada.');
-
       setGenerationStatus('Enviando solicitação com preservação de movimento...');
       
       const tryOnPrompt = `A realistic video showing the exact same motion and action as the reference frames. The person from the first frame is now wearing the exact outfit from the reference clothing image. Maintain identity, background, and the specific movement. The person is ${prompt}. High quality, cinematic.`;
 
-      const response = await fetch(HF_API_URL, {
+      const response = await fetch('/api/generate-video', {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${HF_API_KEY}`,
           'Content-Type': 'application/json',
-          Accept: 'video/mp4',
-          'x-use-cache': 'false',
-          'x-wait-for-model': 'true',
         },
         body: JSON.stringify({
+          model: MODEL_NAME,
           inputs: tryOnPrompt,
           parameters: {
             image: videoFrame.split(',')[1],
@@ -160,17 +153,21 @@ export default function App() {
 
       if (!response.ok) {
         const errText = await response.text();
-        throw new Error(`Falha na inferência do modelo (${response.status}): ${errText}`);
+        throw new Error(`Falha na inferência (${response.status}): ${errText}`);
       }
 
       const blob = await response.blob();
+      if (!blob.type.includes('video')) {
+        const text = await blob.text();
+        throw new Error(`Resposta inválida do servidor: ${text || 'não retornou vídeo.'}`);
+      }
       const url = URL.createObjectURL(blob);
       setVideoUrl(url);
       setGenerationStatus('');
     } catch (err: any) {
       console.error(err);
       setError(err.message || 'Ocorreu um erro inesperado.');
-      if (err.message?.includes('401') || err.message?.includes('403')) setHasApiKey(false);
+      if (err.message?.includes('VITE_HF_API_KEY') || err.message?.includes('HF_API_KEY')) setHasApiKey(false);
     } finally {
       setIsGenerating(false);
     }
@@ -346,7 +343,7 @@ export default function App() {
           </div>
           <h1 className="text-2xl font-bold mb-4">Configuração Necessária</h1>
           <p className="text-gray-400 mb-8 leading-relaxed">
-            Defina a variável `VITE_HF_API_KEY` no arquivo `.env.local` com seu token do Hugging Face para usar o modelo open source.
+            Defina a variável `HF_API_KEY` (ou `VITE_HF_API_KEY`) no arquivo `.env.local` com seu token do Hugging Face para usar o modelo open source.
           </p>
           <p className="mt-6 text-xs text-gray-500">
             Crie um token em <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener noreferrer" className="underline hover:text-blue-400">huggingface.co/settings/tokens</a>.

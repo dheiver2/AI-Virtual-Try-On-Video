@@ -13,6 +13,6 @@ This contains everything you need to run your app locally.
 
 1. Install dependencies:
    `npm install`
-2. Set the `VITE_HF_API_KEY` in `.env.local` with your Hugging Face token
+2. Set `HF_API_KEY` in `.env.local` with your Hugging Face token
 3. Run the app:
    `npm run dev`
