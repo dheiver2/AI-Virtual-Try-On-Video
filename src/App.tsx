@@ -17,7 +17,14 @@ import {
   RefreshCw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-const MODEL_NAME = 'MagicTryOn';
+
+type GarmentCategory = 'upper_body' | 'lower_body' | 'dresses';
+
+const GARMENT_OPTIONS: Array<{ value: GarmentCategory; label: string; help: string }> = [
+  { value: 'upper_body', label: 'Parte de cima', help: 'camiseta, blusa, casaco' },
+  { value: 'lower_body', label: 'Parte de baixo', help: 'calca, saia, short' },
+  { value: 'dresses', label: 'Vestido', help: 'peca unica' },
+];
 
 export default function App() {
   const [showLanding, setShowLanding] = useState(true);
@@ -25,8 +32,9 @@ export default function App() {
   const [referenceVideo, setReferenceVideo] = useState<string | null>(null);
   const [referenceVideoData, setReferenceVideoData] = useState<string | null>(null);
   const [videoFrame, setVideoFrame] = useState<string | null>(null);
-  const [lastFrame, setLastFrame] = useState<string | null>(null);
-  const [prompt, setPrompt] = useState('A person wearing this outfit, maintaining the same pose and environment as the reference.');
+  const [videoDuration, setVideoDuration] = useState<number | null>(null);
+  const [garmentCategory, setGarmentCategory] = useState<GarmentCategory>('upper_body');
+  const [prompt, setPrompt] = useState('Manter o movimento original e trocar somente a roupa principal pela peca enviada, com caimento realista.');
   const [isGenerating, setIsGenerating] = useState(false);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -35,7 +43,6 @@ export default function App() {
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoInputRef = useRef<HTMLInputElement>(null);
-  const videoPreviewRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
     setHasApiKey(true);
@@ -61,59 +68,44 @@ export default function App() {
     const reader = new FileReader();
     reader.onloadend = () => setReferenceVideoData(reader.result as string);
     reader.readAsDataURL(file);
-    
-    // Extract first frame and force 16:9 aspect ratio
+    setVideoUrl(null);
+    setError(null);
+
+    // Extract the first frame preserving the original aspect ratio.
     const video = document.createElement('video');
     video.src = url;
     video.crossOrigin = 'anonymous';
-    video.currentTime = 0.1;
-    video.onloadeddata = () => {
+    video.preload = 'metadata';
+    video.muted = true;
+
+    video.onloadedmetadata = () => {
+      setVideoDuration(video.duration);
+
       const extractFrame = (time: number, callback: (data: string) => void) => {
         const tempVideo = document.createElement('video');
         tempVideo.src = url;
         tempVideo.crossOrigin = 'anonymous';
-        tempVideo.currentTime = time;
+        tempVideo.preload = 'auto';
+        tempVideo.muted = true;
+        tempVideo.onloadedmetadata = () => {
+          tempVideo.currentTime = Math.min(time, Math.max(tempVideo.duration - 0.05, 0));
+        };
         tempVideo.onseeked = () => {
+          const maxDimension = 1280;
+          const scale = Math.min(1, maxDimension / Math.max(tempVideo.videoWidth, tempVideo.videoHeight));
           const canvas = document.createElement('canvas');
-          canvas.width = 1280;
-          canvas.height = 720;
+          canvas.width = Math.max(1, Math.round(tempVideo.videoWidth * scale));
+          canvas.height = Math.max(1, Math.round(tempVideo.videoHeight * scale));
           const ctx = canvas.getContext('2d');
+
           if (ctx) {
-            const videoRatio = tempVideo.videoWidth / tempVideo.videoHeight;
-            const targetRatio = 16 / 9;
-            let drawWidth, drawHeight, offsetX, offsetY;
-
-            if (videoRatio > targetRatio) {
-              drawHeight = canvas.height;
-              drawWidth = canvas.height * videoRatio;
-              offsetX = (canvas.width - drawWidth) / 2;
-              offsetY = 0;
-            } else {
-              drawWidth = canvas.width;
-              drawHeight = canvas.width / videoRatio;
-              offsetX = 0;
-              offsetY = (canvas.height - drawHeight) / 2;
-            }
-
-            ctx.fillStyle = '#000';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-            ctx.drawImage(tempVideo, offsetX, offsetY, drawWidth, drawHeight);
-            callback(canvas.toDataURL('image/jpeg', 0.9));
+            ctx.drawImage(tempVideo, 0, 0, canvas.width, canvas.height);
+            callback(canvas.toDataURL('image/jpeg', 0.95));
           }
         };
       };
 
-      // Extract first frame
       extractFrame(0.1, setVideoFrame);
-      
-      // Extract last frame (wait for duration)
-      if (video.duration) {
-        extractFrame(video.duration - 0.1, setLastFrame);
-      } else {
-        video.onloadedmetadata = () => {
-          extractFrame(video.duration - 0.1, setLastFrame);
-        };
-      }
     };
   };
 
@@ -122,16 +114,18 @@ export default function App() {
       setError('Por favor, envie a imagem da roupa e o vídeo de referência.');
       return;
     }
+    if (videoDuration !== null && (videoDuration < 2 || videoDuration > 10)) {
+      setError('Para melhor qualidade com o novo pipeline, use um vídeo entre 2 e 10 segundos.');
+      return;
+    }
 
     setIsGenerating(true);
     setError(null);
     setVideoUrl(null);
-    setGenerationStatus('Iniciando geração do vídeo...');
+    setGenerationStatus('Preparando o frame de referencia da roupa...');
 
     try {
-      setGenerationStatus('Enviando solicitação para o MagicTryOn...');
-      
-      const tryOnPrompt = `A realistic video showing the exact same motion and action as the reference frames. The person from the first frame is now wearing the exact outfit from the reference clothing image. Maintain identity, background, and the specific movement. The person is ${prompt}. High quality, cinematic.`;
+      setGenerationStatus('Gerando o look-base com try-on de alta fidelidade...');
 
       const response = await fetch('/api/generate-video', {
         method: 'POST',
@@ -139,12 +133,11 @@ export default function App() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          model: MODEL_NAME,
-          prompt: tryOnPrompt,
+          prompt,
           garmentImage: clothingImage,
+          garmentCategory,
           sourceVideo: referenceVideoData,
           firstFrame: videoFrame,
-          ...(lastFrame && { lastFrame }),
         }),
       });
 
@@ -376,15 +369,15 @@ export default function App() {
               <Play className="w-5 h-5 rotate-180" />
             </button>
             <button 
-              onClick={() => {
-                setClothingImage(null);
-                setReferenceVideo(null);
-                setReferenceVideoData(null);
-                setVideoFrame(null);
-                setLastFrame(null);
-                setVideoUrl(null);
-                setError(null);
-              }}
+                      onClick={() => {
+                        setClothingImage(null);
+                        setReferenceVideo(null);
+                        setReferenceVideoData(null);
+                        setVideoFrame(null);
+                        setVideoDuration(null);
+                        setVideoUrl(null);
+                        setError(null);
+                      }}
               className="p-2 hover:bg-white/5 rounded-lg transition-colors text-gray-400 hover:text-white"
               title="Resetar"
             >
@@ -467,14 +460,40 @@ export default function App() {
             <section>
               <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-4 flex items-center gap-2">
                 <Sparkles className="w-4 h-4" />
-                Descrição da Transformação
+                Configuracao do Try-On
               </h2>
-              <textarea
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                placeholder="Descreva como a roupa deve aparecer no vídeo..."
-                className="w-full h-32 bg-white/5 border border-white/10 rounded-2xl p-4 text-white placeholder:text-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all resize-none"
-              />
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm text-gray-400 mb-2">Tipo da peca</label>
+                  <select
+                    value={garmentCategory}
+                    onChange={(e) => setGarmentCategory(e.target.value as GarmentCategory)}
+                    className="w-full bg-white/5 border border-white/10 rounded-2xl p-4 text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all"
+                  >
+                    {GARMENT_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value} className="bg-[#111]">
+                        {option.label} - {option.help}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <textarea
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  placeholder="Ex.: manter rosto, cabelo, cenario e movimento originais; aplicar exatamente a roupa enviada sem trocar o estilo do video."
+                  className="w-full h-32 bg-white/5 border border-white/10 rounded-2xl p-4 text-white placeholder:text-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all resize-none"
+                />
+
+                <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-gray-400">
+                  O novo pipeline funciona melhor com videos curtos de 2 a 10 segundos e uma foto da roupa bem recortada.
+                  {videoDuration !== null && (
+                    <span className={`block mt-2 font-medium ${videoDuration >= 2 && videoDuration <= 10 ? 'text-green-400' : 'text-amber-400'}`}>
+                      Duracao detectada: {videoDuration.toFixed(1)}s
+                    </span>
+                  )}
+                </div>
+              </div>
             </section>
 
             <button
@@ -489,12 +508,12 @@ export default function App() {
               {isGenerating ? (
                 <>
                   <Loader2 className="w-6 h-6 animate-spin" />
-                  Gerando Campanha...
+                  Gerando Video...
                 </>
               ) : (
                 <>
                   <Play className="w-6 h-6 fill-current" />
-                  Criar Conteúdo com Influencer
+                  Criar Video com Troca de Roupa
                 </>
               )}
             </button>
@@ -539,9 +558,9 @@ export default function App() {
                         <div className="w-24 h-24 border-4 border-blue-500/20 border-t-blue-500 rounded-full animate-spin" />
                         <Sparkles className="w-8 h-8 text-blue-400 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 animate-pulse" />
                       </div>
-                      <h3 className="text-xl font-bold mb-2">Processando Vídeo...</h3>
+                      <h3 className="text-xl font-bold mb-2">Processando Video...</h3>
                       <p className="text-gray-400 max-w-xs leading-relaxed">
-                        {generationStatus || 'Estamos aplicando a nova roupa frame a frame.'}
+                        {generationStatus || 'Estamos editando o video original para manter movimento, rosto e cenario.'}
                       </p>
                     </motion.div>
                   ) : (
@@ -555,7 +574,7 @@ export default function App() {
                         <Video className="w-10 h-10" />
                       </div>
                       <h3 className="text-lg font-semibold text-white mb-2">Resultado Final</h3>
-                      <p className="max-w-xs">O vídeo processado com a nova roupa aparecerá aqui.</p>
+                      <p className="max-w-xs">O video final com a roupa aplicada no movimento original aparecera aqui.</p>
                     </motion.div>
                   )}
                 </AnimatePresence>
