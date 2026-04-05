@@ -118,9 +118,9 @@ export default defineConfig(({ mode }) => {
               const garmentBuffer = decodeBase64Input(body.garmentImage);
               const videoBuffer = decodeBase64Input(body.sourceVideo);
 
-              // Usar HuggingFace Inference API para processar vídeo com try-on
+              // Usar novo HuggingFace Router API (api-inference.huggingface.co foi descontinuada)
               // Model: CagliariLuca/virtualtryon-vitonhd-inswapper
-              const apiUrl = 'https://api-inference.huggingface.co/models/CagliariLuca/virtualtryon-vitonhd-inswapper';
+              const apiUrl = 'https://router.huggingface.co/models/CagliariLuca/virtualtryon-vitonhd-inswapper';
 
               const FormData = (await import('form-data')).default;
               const formData = new FormData();
