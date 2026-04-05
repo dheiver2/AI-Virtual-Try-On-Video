@@ -1,21 +1,18 @@
-# Guia de Teste - Virtual Try-On com API Gratuita 🚀
+# Guia de Teste - Virtual Try-On com API Replicate 🚀
 
 ## Pré-requisitos
 
 ✅ Node.js instalado
-✅ Token HuggingFace (gratuito)
+✅ Token Replicate (gratuito)
 
 ---
 
-## Passo 1: Obter Token HuggingFace
+## Passo 1: Obter Token Replicate
 
-1. Acesse [https://huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)
-2. Faça login ou crie uma conta (gratuita)
-3. Clique em **"New token"**
-4. Dê um nome: `virtual-tryon-app`
-5. Role de "Read" ↔️ Configure com permissão "Read"
-6. Clique em **"Generate a token"**
-7. **Copie o token** (será exibido uma única vez)
+1. Acesse [https://replicate.com/account/api-tokens](https://replicate.com/account/api-tokens)
+2. Faça login ou crie uma conta (gratuita - $200 crédito!)
+3. Você verá seu token de API (começará com `r8_`)
+4. **Copie o token**
 
 ---
 
@@ -26,26 +23,26 @@
 Crie ou edite `.env.local` na raiz do projeto:
 
 ```env
-HUGGINGFACE_API_KEY=hf_sua_chave_aqui_muito_longa_xyz123abc
+REPLICATE_API_TOKEN=r8_sua_chave_aqui_muito_longa_xyz123abc
 ```
 
 ### Option B: Via Variável de Ambiente do Sistema
 
 **Windows (PowerShell):**
 ```powershell
-$env:HUGGINGFACE_API_KEY="hf_sua_chave_aqui"
+$env:REPLICATE_API_TOKEN="r8_sua_chave_aqui"
 npm run dev
 ```
 
 **Windows (CMD):**
 ```cmd
-set HUGGINGFACE_API_KEY=hf_sua_chave_aqui
+set REPLICATE_API_TOKEN=r8_sua_chave_aqui
 npm run dev
 ```
 
 **Linux/Mac:**
 ```bash
-export HUGGINGFACE_API_KEY=hf_sua_chave_aqui
+export REPLICATE_API_TOKEN=r8_sua_chave_aqui
 npm run dev
 ```
 
@@ -108,18 +105,18 @@ Você verá algo como:
 
 ❌ Se receber erro:
 
-### Erro: "Configure HUGGINGFACE_API_KEY"
+### Erro: "Configure REPLICATE_API_TOKEN"
 - Verifique se `.env.local` existe
+- Verifique se o token está correto em https://replicate.com/account/api-tokens
 - Reinicie o servidor: `npm run dev`
 
-### Erro: "API Error 429"
-- Sua cota de requisições expirou
-- Aguarde alguns minutos
-
-### Erro: "Erro na API HuggingFace (500)"
-- A API pode estar sobrecarregada
+### Erro: "Timeout: processamento levou muito tempo"
+- Replicate pode estar processando lentamente
 - Tente novamente em alguns minutos
-- Ou acesse [HuggingFace Spaces](https://huggingface.co/spaces) para testar diretamente
+
+### Erro: "Erro ao iniciar processamento"
+- Token inválido ou expirado
+- Copie um novo token de https://replicate.com/account/api-tokens
 
 ---
 
@@ -132,14 +129,15 @@ node test-api.js ./Downloads/clothing.jpg ./Downloads/video.mp4
 
 ---
 
-## Limitações da API Gratuita
+## Limitações do Tier Gratuito Replicate
 
 | Limite | Valor |
 |--------|-------|
-| **Taxa** | 15 requisições/minuto |
-| **Tamanho máx** | 512MB por vídeo |
-| **Tempo processamento** | 30-60 segundos |
-| **Tipo processamento** | Virtual try-on de imagem |
+| **Créditos iniciais** | $200 grátis (suficiente para ~400 tentativas) |
+| **Duração máxima** | 60 segundos por processamento |
+| **Tamanho de arquivo** | Sem limite aparente |
+| **Modelo** | IDM-VTON (melhor qualidade) |
+| **Velocidade** | Pode haver fila em horários de pico |
 
 ---
 

@@ -4,26 +4,26 @@
 
 ❌ **PROBLEMA ANTERIOR**: Faltava `config.json` do MagicTryOn (erro 500)
 
-✅ **SOLUÇÃO IMPLEMENTADA**: API gratuita HuggingFace em vez de setup local
+✅ **SOLUÇÃO IMPLEMENTADA**: API gratuita Replicate com modelo IDM-VTON
 
-🎯 **RESULTADO**: Setup em 1 minuto, sem dependências pesadas
+🎯 **RESULTADO**: Setup em 1 minuto, processamento confiável de virtual try-on
 
 ---
 
 ## 🔧 3 Passos Simples
 
-### Passo 1️⃣: Obter Token (2 min)
+### Passo 1️⃣: Obter Token Replicate (2 min)
 
-1. Acesse: [https://huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)
-2. Clique "New token" → Configure "Read" → Gerar
-3. **Copie o token** (longo, começa com `hf_`)
+1. Acesse: [https://replicate.com/account/api-tokens](https://replicate.com/account/api-tokens)
+2. Copie seu token de API (começará com `r8_`)
+3. **Pronto!**
 
 ### Passo 2️⃣: Configurar Token (30 seg)
 
 Edite ou crie `.env.local` na raiz do projeto:
 
 ```env
-HUGGINGFACE_API_KEY=hf_cole_seu_token_aqui
+REPLICATE_API_TOKEN=r8_cole_seu_token_aqui
 ```
 
 **OU execute (mais fácil):**
@@ -66,12 +66,13 @@ Você tem:
 
 ---
 
-## ⚠️ Limitações (Gratuito)
+## ⚠️ Limitações (Tier Gratuito Replicate)
 
-- ⏱️ Max 15 requisições por minuto
-- 📦 Vídeos até 512MB
-- ⏳ Processamento: 30-60 segundos
-- 🔄 Pode haver fila em horários de pico
+- 💰 **Créditos gratuitos**: Começam com $200 em crédito
+- ⏱️ **Duração**: 60 segundos máximo por processamento
+- 📦 **Tamanho**: Sem limite aparente
+- 🔄 **Fila**: Pode haver espera em horários de pico
+- ✅ **Modelo**: IDM-VTON (melhor qualidade de virtual try-on)
 
 ---
 
