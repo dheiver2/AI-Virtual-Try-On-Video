@@ -1,79 +1,74 @@
-import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import { defineConfig, loadEnv } from 'vite';
 
-const ensureDir = (dir: string) => {
-  fs.mkdirSync(dir, { recursive: true });
-};
+// ─── Replicate helpers ───────────────────────────────────────────────
 
-const decodeBase64Input = (value: string): Buffer => {
-  const raw = value.includes(',') ? value.split(',')[1] : value;
-  return Buffer.from(raw, 'base64');
-};
+const REPLICATE_API = 'https://api.replicate.com/v1/predictions';
 
-const resolveEnvPath = (projectRoot: string, value: string | undefined, fallback: string): string => {
-  if (!value || value.trim() === '') return fallback;
-  return path.isAbsolute(value) ? value : path.resolve(projectRoot, value);
-};
+// IDM-VTON: imagem pessoa + imagem roupa → imagem pessoa vestida
+const IDM_VTON_VERSION = '0513734a452173b8173e907e3a59d19a36266e55b48528559432bd21c7d7e985';
 
-const buildPatchedScript = (scriptContent: string, modelRoot: string): string => {
-  const normalizedModelRoot = modelRoot.replace(/\\/g, '/');
-  const patched = scriptContent.replace(
-    /model_name\s*=\s*["'][^"']+["']/,
-    `model_name          = "${normalizedModelRoot}"`
-  );
-  if (patched === scriptContent) {
-    throw new Error('Não foi possível aplicar patch em model_name no script do MagicTryOn.');
-  }
-  return patched;
-};
+// Stable Video Diffusion: imagem → vídeo animado
+const SVD_VERSION = '3f0457e4619daac51203dedb472816fd4af51f3149fa7a9e0b5ffcf1b8172438';
 
-const runCommand = (command: string, args: string[], cwd: string) =>
-  new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
-    const child = spawn(command, args, { cwd, shell: false });
-    let stdout = '';
-    let stderr = '';
+interface PredictionResult {
+  id: string;
+  status: string;
+  output: any;
+  error: string | null;
+}
 
-    child.stdout.on('data', (chunk) => {
-      stdout += chunk.toString();
-    });
-
-    child.stderr.on('data', (chunk) => {
-      stderr += chunk.toString();
-    });
-
-    child.on('error', reject);
-    child.on('close', (code) => resolve({ code, stdout, stderr }));
+async function replicateCreate(
+  apiToken: string,
+  version: string,
+  input: Record<string, any>,
+): Promise<PredictionResult> {
+  const resp = await fetch(REPLICATE_API, {
+    method: 'POST',
+    headers: {
+      Authorization: `Token ${apiToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ version, input }),
   });
+  if (!resp.ok) {
+    const txt = await resp.text();
+    throw new Error(`Replicate create falhou (${resp.status}): ${txt}`);
+  }
+  return resp.json() as Promise<PredictionResult>;
+}
 
-const findNewestMp4 = (dir: string): string | null => {
-  if (!fs.existsSync(dir)) return null;
-  const queue: string[] = [dir];
-  let bestPath: string | null = null;
-  let bestMtime = 0;
-
-  while (queue.length > 0) {
-    const current = queue.pop() as string;
-    const entries = fs.readdirSync(current, { withFileTypes: true });
-    for (const entry of entries) {
-      const fullPath = path.join(current, entry.name);
-      if (entry.isDirectory()) {
-        queue.push(fullPath);
-      } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.mp4')) {
-        const stat = fs.statSync(fullPath);
-        if (stat.mtimeMs > bestMtime) {
-          bestMtime = stat.mtimeMs;
-          bestPath = fullPath;
-        }
-      }
+async function replicatePoll(
+  apiToken: string,
+  predictionId: string,
+  maxWaitMs = 300_000,
+): Promise<any> {
+  const start = Date.now();
+  while (Date.now() - start < maxWaitMs) {
+    await new Promise((r) => setTimeout(r, 3000));
+    const resp = await fetch(`${REPLICATE_API}/${predictionId}`, {
+      headers: { Authorization: `Token ${apiToken}` },
+    });
+    if (!resp.ok) throw new Error(`Replicate poll falhou (${resp.status})`);
+    const data = (await resp.json()) as PredictionResult;
+    if (data.status === 'succeeded') return data.output;
+    if (data.status === 'failed' || data.status === 'canceled') {
+      throw new Error(`Replicate ${data.status}: ${data.error || 'erro desconhecido'}`);
     }
   }
+  throw new Error('Timeout: processamento excedeu 5 minutos');
+}
 
-  return bestPath;
-};
+async function downloadUrl(url: string): Promise<Buffer> {
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`Download falhou (${resp.status}): ${url}`);
+  return Buffer.from(await resp.arrayBuffer());
+}
+
+// ─── Vite config ─────────────────────────────────────────────────────
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, '.', '');
@@ -83,12 +78,12 @@ export default defineConfig(({ mode }) => {
       react(),
       tailwindcss(),
       {
-        name: 'magictryon-free-api',
+        name: 'virtual-tryon-api',
         configureServer(server) {
+          // ── POST /api/generate-video ──────────────────────────────
           server.middlewares.use('/api/generate-video', async (req, res) => {
             if (req.method !== 'POST') {
               res.statusCode = 405;
-              res.setHeader('Content-Type', 'text/plain');
               res.end('Method Not Allowed');
               return;
             }
@@ -96,107 +91,67 @@ export default defineConfig(({ mode }) => {
             try {
               const chunks: Buffer[] = [];
               for await (const chunk of req) chunks.push(chunk as Buffer);
-              const rawBody = Buffer.concat(chunks).toString('utf-8');
-              const body = JSON.parse(rawBody || '{}');
+              const body = JSON.parse(Buffer.concat(chunks).toString('utf-8') || '{}');
 
-              if (!body.garmentImage || !body.sourceVideo) {
-                res.statusCode = 400;
-                res.setHeader('Content-Type', 'text/plain');
-                res.end('garmentImage e sourceVideo são obrigatórios.');
-                return;
-              }
-
+              // ── validação ──
               const apiToken = env.REPLICATE_API_TOKEN || process.env.REPLICATE_API_TOKEN;
               if (!apiToken) {
                 res.statusCode = 400;
-                res.setHeader('Content-Type', 'text/plain');
-                res.end('Configure REPLICATE_API_TOKEN no .env.local para usar a API de virtual try-on.');
+                res.end('Configure REPLICATE_API_TOKEN no .env.local');
                 return;
               }
-
-              // Usar Replicate API - mais confiável para virtual try-on
-              // Model: cuuupid/idm-vton (estado-da-arte em virtual try-on)
-              const replicateApiUrl = 'https://api.replicate.com/v1/predictions';
-
-              // firstFrame = frame extraído do vídeo (a pessoa)
-              // garmentImage = a roupa que queremos aplicar
-              if (!body.firstFrame) {
+              if (!body.garmentImage || !body.firstFrame) {
                 res.statusCode = 400;
-                res.setHeader('Content-Type', 'text/plain');
-                res.end('firstFrame é obrigatório (frame extraído do vídeo com a pessoa).');
+                res.end('garmentImage e firstFrame são obrigatórios.');
                 return;
               }
 
-              // Enviar para Replicate com version hash
-              const prediction = await fetch(replicateApiUrl, {
-                method: 'POST',
-                headers: {
-                  'Authorization': `Token ${apiToken}`,
-                  'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                  version: '139cb1163486954531b765d4ac3bb6d3e02fe121151665adfc3b47e9ba3ebf67',
-                  input: {
-                    human_img: body.firstFrame,    // Pessoa (frame do vídeo)
-                    garm_img: body.garmentImage,   // Roupa a ser aplicada
-                    crop: false,
-                    steps: 30,
-                  },
-                }),
+              console.log('[TryOn] ── Etapa 1/2: IDM-VTON (imagem try-on) ──');
+
+              // ── ETAPA 1: IDM-VTON – gerar imagem da pessoa com a roupa ──
+              const tryonPred = await replicateCreate(apiToken, IDM_VTON_VERSION, {
+                human_img: body.firstFrame,       // data:image/jpeg;base64,...
+                garm_img: body.garmentImage,       // data:image/jpeg;base64,...
+                garment_des: body.prompt || 'Clothing item to try on',
+                category: 'upper_body',
+                crop: true,                        // ajusta aspecto automaticamente
+                steps: 30,
+                seed: 42,
               });
 
-              if (!prediction.ok) {
-                const errText = await prediction.text();
-                throw new Error(`Erro ao iniciar processamento (${prediction.status}): ${errText}`);
-              }
+              console.log(`[TryOn] IDM-VTON prediction: ${tryonPred.id}`);
+              const tryonOutput = await replicatePoll(apiToken, tryonPred.id);
+              // tryonOutput é uma URL de imagem
+              const tryonImageUrl: string =
+                typeof tryonOutput === 'string' ? tryonOutput : tryonOutput[0] || tryonOutput;
 
-              const predictionData = await prediction.json() as any;
-              const predictionId = predictionData.id;
+              console.log(`[TryOn] ✓ Imagem try-on gerada: ${tryonImageUrl}`);
+              console.log('[TryOn] ── Etapa 2/2: SVD (imagem → vídeo) ──');
 
-              // Aguardar resultado (máx 300 segundos)
-              let result: any = null;
-              let attempts = 0;
-              const maxAttempts = 60; // 60 tentativas x 5 segundos = 5 minutos
+              // ── ETAPA 2: Stable Video Diffusion – animar a imagem ──
+              const videoPred = await replicateCreate(apiToken, SVD_VERSION, {
+                input_image: tryonImageUrl,
+                sizing_strategy: 'maintain_aspect_ratio',
+                frames_per_second: 6,
+                motion_bucket_id: 127,
+                cond_aug: 0.02,
+              });
 
-              while (attempts < maxAttempts) {
-                await new Promise(r => setTimeout(r, 5000)); // Aguardar 5 segundos
+              console.log(`[TryOn] SVD prediction: ${videoPred.id}`);
+              const videoOutput = await replicatePoll(apiToken, videoPred.id);
+              const videoUrl: string =
+                typeof videoOutput === 'string' ? videoOutput : videoOutput[0] || videoOutput;
 
-                const statusResponse = await fetch(`${replicateApiUrl}/${predictionId}`, {
-                  headers: { 'Authorization': `Token ${apiToken}` },
-                });
+              console.log(`[TryOn] ✓ Vídeo gerado: ${videoUrl}`);
 
-                if (!statusResponse.ok) {
-                  throw new Error(`Erro ao verificar status (${statusResponse.status})`);
-                }
-
-                const status = await statusResponse.json();
-
-                if (status.status === 'succeeded') {
-                  result = status.output;
-                  break;
-                } else if (status.status === 'failed') {
-                  throw new Error(`Processamento falhou: ${status.error || 'Erro desconhecido'}`);
-                }
-
-                attempts++;
-              }
-
-              if (!result) {
-                throw new Error('Timeout: processamento levou muito tempo');
-              }
-
-              // Fazer download do resultado
-              const outputResponse = await fetch(result[0] || result);
-              if (!outputResponse.ok) {
-                throw new Error(`Erro ao baixar resultado (${outputResponse.status})`);
-              }
-
-              const outputBuffer = Buffer.from(await outputResponse.arrayBuffer());
+              // ── download e envio ──
+              const videoBuffer = await downloadUrl(videoUrl);
 
               res.statusCode = 200;
               res.setHeader('Content-Type', 'video/mp4');
-              res.end(outputBuffer);
+              res.end(videoBuffer);
             } catch (error: any) {
+              console.error('[TryOn] ERRO:', error.message);
               res.statusCode = 500;
               res.setHeader('Content-Type', 'text/plain');
               res.end(error?.message || 'Falha ao processar virtual try-on.');
