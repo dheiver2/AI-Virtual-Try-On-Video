@@ -1,0 +1,5 @@
+{
+  "name": "AI Virtual Try-On Video",
+  "description": "Transforme uma imagem de roupa em um vídeo realista de alguém vestindo-a usando o modelo Veo da Google.",
+  "requestFramePermissions": []
+}
