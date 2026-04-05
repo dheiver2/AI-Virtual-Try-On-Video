@@ -118,7 +118,7 @@ export default defineConfig(({ mode }) => {
               // Model: cuuupid/idm-vton (estado-da-arte em virtual try-on)
               const replicateApiUrl = 'https://api.replicate.com/v1/predictions';
 
-              // Enviar para Replicate
+              // Enviar para Replicate com version hash
               const prediction = await fetch(replicateApiUrl, {
                 method: 'POST',
                 headers: {
@@ -126,7 +126,7 @@ export default defineConfig(({ mode }) => {
                   'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({
-                  model: 'cuuupid/idm-vton',
+                  version: '139cb1163486954531b765d4ac3bb6d3e02fe121151665adfc3b47e9ba3ebf67', // IDM-VTON latest
                   input: {
                     human_img: body.garmentImage, // Imagem da pessoa
                     garm_img: body.garmentImage,  // Imagem da roupa
