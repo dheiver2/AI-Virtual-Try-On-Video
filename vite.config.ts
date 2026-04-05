@@ -115,11 +115,8 @@ export default defineConfig(({ mode }) => {
               }
 
               // Usar Replicate API - mais confiável para virtual try-on
-              // Model: IDM-VTON (melhor modelo de virtual try-on)
+              // Model: cuuupid/idm-vton (estado-da-arte em virtual try-on)
               const replicateApiUrl = 'https://api.replicate.com/v1/predictions';
-
-              // Converter base64 para URLs de dados
-              const garmentDataUrl = body.garmentImage;
 
               // Enviar para Replicate
               const prediction = await fetch(replicateApiUrl, {
@@ -129,10 +126,10 @@ export default defineConfig(({ mode }) => {
                   'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({
-                  version: '8bafbc13a02caaaba766218b0e49b5854c1b20410a10f6f374e0a59bcc691299', // IDM-VTON
+                  model: 'cuuupid/idm-vton',
                   input: {
-                    person_image: garmentDataUrl,
-                    garment_image: garmentDataUrl,
+                    human_img: body.garmentImage, // Imagem da pessoa
+                    garm_img: body.garmentImage,  // Imagem da roupa
                   },
                 }),
               });
