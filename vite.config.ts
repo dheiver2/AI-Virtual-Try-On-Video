@@ -118,6 +118,15 @@ export default defineConfig(({ mode }) => {
               // Model: cuuupid/idm-vton (estado-da-arte em virtual try-on)
               const replicateApiUrl = 'https://api.replicate.com/v1/predictions';
 
+              // firstFrame = frame extraído do vídeo (a pessoa)
+              // garmentImage = a roupa que queremos aplicar
+              if (!body.firstFrame) {
+                res.statusCode = 400;
+                res.setHeader('Content-Type', 'text/plain');
+                res.end('firstFrame é obrigatório (frame extraído do vídeo com a pessoa).');
+                return;
+              }
+
               // Enviar para Replicate com version hash
               const prediction = await fetch(replicateApiUrl, {
                 method: 'POST',
@@ -126,10 +135,12 @@ export default defineConfig(({ mode }) => {
                   'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({
-                  version: '139cb1163486954531b765d4ac3bb6d3e02fe121151665adfc3b47e9ba3ebf67', // IDM-VTON latest
+                  version: '139cb1163486954531b765d4ac3bb6d3e02fe121151665adfc3b47e9ba3ebf67',
                   input: {
-                    human_img: body.garmentImage, // Imagem da pessoa
-                    garm_img: body.garmentImage,  // Imagem da roupa
+                    human_img: body.firstFrame,    // Pessoa (frame do vídeo)
+                    garm_img: body.garmentImage,   // Roupa a ser aplicada
+                    crop: false,
+                    steps: 30,
                   },
                 }),
               });
