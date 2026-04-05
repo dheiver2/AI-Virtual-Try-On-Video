@@ -4,7 +4,6 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { GoogleGenAI, VideoGenerationReferenceType, VideoGenerationReferenceImage } from "@google/genai";
 import { 
   Upload, 
   Video, 
@@ -18,18 +17,9 @@ import {
   RefreshCw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-
-// Extend window interface for AI Studio API key selection
-declare global {
-  interface Window {
-    aistudio?: {
-      hasSelectedApiKey: () => Promise<boolean>;
-      openSelectKey: () => Promise<void>;
-    };
-  }
-}
-
-const MODEL_NAME = 'veo-3.1-generate-preview';
+const MODEL_NAME = 'ali-vilab/i2vgen-xl';
+const HF_API_URL = `https://api-inference.huggingface.co/models/${MODEL_NAME}`;
+const HF_API_KEY = import.meta.env.VITE_HF_API_KEY as string | undefined;
 
 export default function App() {
   const [showLanding, setShowLanding] = useState(true);
@@ -49,24 +39,8 @@ export default function App() {
   const videoPreviewRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
-    checkApiKey();
+    setHasApiKey(Boolean(HF_API_KEY));
   }, []);
-
-  const checkApiKey = async () => {
-    if (window.aistudio) {
-      const selected = await window.aistudio.hasSelectedApiKey();
-      setHasApiKey(selected);
-    } else {
-      setHasApiKey(true);
-    }
-  };
-
-  const handleOpenKeySelector = async () => {
-    if (window.aistudio) {
-      await window.aistudio.openSelectKey();
-      setHasApiKey(true);
-    }
-  };
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -153,92 +127,41 @@ export default function App() {
     setGenerationStatus('Iniciando geração do vídeo...');
 
     try {
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (!apiKey) throw new Error('API Key não encontrada.');
-
-      const ai = new GoogleGenAI({ apiKey });
-      
-      // Use the clothing as a reference asset
-      const referenceImages: VideoGenerationReferenceImage[] = [
-        {
-          image: {
-            imageBytes: clothingImage.split(',')[1],
-            mimeType: 'image/jpeg',
-          },
-          referenceType: VideoGenerationReferenceType.ASSET,
-        }
-      ];
+      if (!HF_API_KEY) throw new Error('VITE_HF_API_KEY não encontrada.');
 
       setGenerationStatus('Enviando solicitação com preservação de movimento...');
       
-      // Prompt optimized for motion preservation
       const tryOnPrompt = `A realistic video showing the exact same motion and action as the reference frames. The person from the first frame is now wearing the exact outfit from the reference clothing image. Maintain identity, background, and the specific movement. The person is ${prompt}. High quality, cinematic.`;
 
-      console.log('Iniciando geração de vídeo com preservação de movimento:', tryOnPrompt);
-      
-      let operation = await ai.models.generateVideos({
-        model: MODEL_NAME,
-        prompt: tryOnPrompt,
-        image: {
-          imageBytes: videoFrame.split(',')[1],
-          mimeType: 'image/jpeg',
-        },
-        config: {
-          numberOfVideos: 1,
-          referenceImages: referenceImages,
-          resolution: '720p',
-          aspectRatio: '16:9',
-          // Use the last frame of the original video to force the motion to match
-          ...(lastFrame && {
-            lastFrame: {
-              imageBytes: lastFrame.split(',')[1],
-              mimeType: 'image/jpeg',
-            }
-          })
-        }
-      });
-
-      console.log('Operação iniciada:', operation.name);
-      setGenerationStatus('O vídeo está sendo processado. Isso pode levar alguns minutos...');
-
-      while (!operation.done) {
-        await new Promise(resolve => setTimeout(resolve, 10000));
-        setGenerationStatus('Ainda processando... Aplicando a roupa ao vídeo...');
-        try {
-          operation = await ai.operations.getVideosOperation({ operation: operation });
-          console.log('Status da operação:', operation.name, 'Done:', operation.done);
-        } catch (pollError) {
-          console.warn('Erro ao verificar status da operação, tentando novamente...', pollError);
-        }
-      }
-
-      if (operation.error) {
-        const errorMsg = (operation.error as any).message || 'Erro na geração do vídeo.';
-        throw new Error(errorMsg);
-      }
-
-      const generatedVideos = operation.response?.generatedVideos;
-      if (!generatedVideos || generatedVideos.length === 0) {
-        console.error('Operação concluída sem vídeos gerados:', operation);
-        throw new Error('O modelo concluiu o processamento, mas nenhum vídeo foi gerado. Isso pode ocorrer devido a filtros de segurança ou restrições de conteúdo.');
-      }
-
-      const downloadLink = generatedVideos[0]?.video?.uri;
-      if (!downloadLink) {
-        console.error('URI do vídeo ausente na resposta:', operation);
-        throw new Error('Link de download não encontrado na resposta do servidor.');
-      }
-
-      setGenerationStatus('Finalizando e baixando o vídeo...');
-
-      const response = await fetch(downloadLink, {
-        method: 'GET',
+      const response = await fetch(HF_API_URL, {
+        method: 'POST',
         headers: {
-          'x-goog-api-key': apiKey,
+          Authorization: `Bearer ${HF_API_KEY}`,
+          'Content-Type': 'application/json',
+          Accept: 'video/mp4',
+          'x-use-cache': 'false',
+          'x-wait-for-model': 'true',
         },
+        body: JSON.stringify({
+          inputs: tryOnPrompt,
+          parameters: {
+            image: videoFrame.split(',')[1],
+            conditioning_image: clothingImage.split(',')[1],
+            ...(lastFrame && { end_frame: lastFrame.split(',')[1] }),
+            num_frames: 49,
+            fps: 8,
+          },
+          options: {
+            wait_for_model: true,
+            use_cache: false,
+          },
+        }),
       });
 
-      if (!response.ok) throw new Error('Falha ao baixar o vídeo gerado.');
+      if (!response.ok) {
+        const errText = await response.text();
+        throw new Error(`Falha na inferência do modelo (${response.status}): ${errText}`);
+      }
 
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
@@ -247,9 +170,7 @@ export default function App() {
     } catch (err: any) {
       console.error(err);
       setError(err.message || 'Ocorreu um erro inesperado.');
-      if (err.message?.includes('Requested entity was not found')) {
-        setHasApiKey(false);
-      }
+      if (err.message?.includes('401') || err.message?.includes('403')) setHasApiKey(false);
     } finally {
       setIsGenerating(false);
     }
@@ -406,7 +327,7 @@ export default function App() {
             <Sparkles className="w-5 h-5 text-blue-400" />
             <span className="font-bold text-white">AI Virtual Try-On</span>
           </div>
-          <p>© 2026 Todos os direitos reservados. Criado com Google Veo.</p>
+          <p>© 2026 Todos os direitos reservados. Criado com modelo open source de vídeo.</p>
         </footer>
       </div>
     );
@@ -425,17 +346,10 @@ export default function App() {
           </div>
           <h1 className="text-2xl font-bold mb-4">Configuração Necessária</h1>
           <p className="text-gray-400 mb-8 leading-relaxed">
-            Para usar a geração de vídeo Veo, você precisa selecionar uma chave de API paga do Google Cloud.
+            Defina a variável `VITE_HF_API_KEY` no arquivo `.env.local` com seu token do Hugging Face para usar o modelo open source.
           </p>
-          <button
-            onClick={handleOpenKeySelector}
-            className="w-full py-4 px-6 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-xl transition-all flex items-center justify-center gap-2 group"
-          >
-            Selecionar Chave de API
-            <Play className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-          </button>
           <p className="mt-6 text-xs text-gray-500">
-            Consulte a <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" rel="noopener noreferrer" className="underline hover:text-blue-400">documentação de faturamento</a> para mais detalhes.
+            Crie um token em <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener noreferrer" className="underline hover:text-blue-400">huggingface.co/settings/tokens</a>.
           </p>
         </motion.div>
       </div>
@@ -667,7 +581,7 @@ export default function App() {
       </main>
 
       <footer className="max-w-7xl mx-auto px-6 py-12 border-t border-white/5 text-center text-gray-500 text-sm">
-        <p>© 2026 AI Virtual Try-On. Powered by Google Veo.</p>
+        <p>© 2026 AI Virtual Try-On. Powered by open source video model.</p>
       </footer>
     </div>
   );
