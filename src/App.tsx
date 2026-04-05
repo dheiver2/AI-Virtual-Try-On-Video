@@ -114,8 +114,8 @@ export default function App() {
       setError('Por favor, envie a imagem da roupa e o vídeo de referência.');
       return;
     }
-    if (videoDuration !== null && (videoDuration < 2 || videoDuration > 10)) {
-      setError('Para melhor qualidade com o novo pipeline, use um vídeo entre 2 e 10 segundos.');
+    if (videoDuration !== null && videoDuration < 2) {
+      setError('Use um video com pelo menos 2 segundos para o modelo ter movimento suficiente.');
       return;
     }
 
@@ -137,6 +137,7 @@ export default function App() {
           garmentImage: clothingImage,
           garmentCategory,
           sourceVideo: referenceVideoData,
+          sourceVideoDuration: videoDuration,
           firstFrame: videoFrame,
         }),
       });
@@ -486,9 +487,9 @@ export default function App() {
                 />
 
                 <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-gray-400">
-                  O novo pipeline funciona melhor com videos curtos de 2 a 10 segundos e uma foto da roupa bem recortada.
+                  O novo pipeline funciona melhor com uma foto da roupa bem recortada. Se o video passar de 10 segundos, ele sera dividido automaticamente em trechos curtos e depois unido no final.
                   {videoDuration !== null && (
-                    <span className={`block mt-2 font-medium ${videoDuration >= 2 && videoDuration <= 10 ? 'text-green-400' : 'text-amber-400'}`}>
+                    <span className={`block mt-2 font-medium ${videoDuration >= 2 ? 'text-green-400' : 'text-amber-400'}`}>
                       Duracao detectada: {videoDuration.toFixed(1)}s
                     </span>
                   )}
